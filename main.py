@@ -20,8 +20,6 @@ from tqdm import tqdm
 
 MODE = None
 
-loss_file_path = f'outdir/loss'
-
 def parse_args():
     parser = argparse.ArgumentParser(description='ST and ST++ Framework')
 
@@ -43,7 +41,8 @@ def parse_args():
     parser.add_argument('--validation-id-path', type=str, required=True)
     parser.add_argument('--pseudo-mask-path', type=str, required=True)
 
-    parser.add_argument('--save-path', type=str, required=True)
+    parser.add_argument('--save-model-path', type=str, required=True)
+    parser.add_argument('--loss-file-path', type=str, required=True)
 
     # arguments for ST++
     parser.add_argument('--reliable-id-path', type=str)
@@ -58,8 +57,8 @@ def main(args):
     global MODE
     MODE = 'train'
 
-    if not os.path.exists(args.save_path):
-        os.makedirs(args.save_path)
+    if not os.path.exists(args.save_model_path):
+        os.makedirs(args.save_model_path)
     if not os.path.exists(args.pseudo_mask_path):
         os.makedirs(args.pseudo_mask_path)
     if args.plus and args.reliable_id_path is None:
@@ -83,7 +82,7 @@ def main(args):
     model, optimizer = init_basic_elems(args)
     print('\nParams: %.1fM' % count_params(model))
 
-    best_model, checkpoints = train(model, trainloader, valloader, criterion, optimizer, args, step='supervised_labeled')
+    best_model, checkpoints = train(model, trainloader, valloader, criterion, optimizer, args,     step=f'st{"++" if args.plus else ""}_supervised_labeled')
 
     """
         ST framework without selective re-training
@@ -270,22 +269,22 @@ def train(model, trainloader, valloader, criterion, optimizer, args, step=""):
             v_loss=avg_val_loss, 
             v_miou=avg_val_miou,    
             v_dice=avg_val_dice,
-            filename= f'{loss_file_path}/{ "plus_" if args.plus else "" }loss_{step}.csv'
+            filename= f'{args.loss_file_path}/{step}_loss.csv'
         )
         mIOU *= 100.0
         if mIOU > previous_best:
             if previous_best != 0:
-                os.remove(os.path.join(args.save_path, '%s_%s_%.2f.pth' % (args.model, args.backbone, previous_best)))
+                os.remove(os.path.join(args.save_model_path, '%s_%s_%.2f.pth' % (args.model, args.backbone, previous_best)))
             previous_best = mIOU
             torch.save(model.module.state_dict(),
-                       os.path.join(args.save_path, '%s_%s_%.2f.pth' % (args.model, args.backbone, mIOU)))
+                       os.path.join(args.save_model_path, '%s_%s_%.2f.pth' % (args.model, args.backbone, mIOU)))
 
             best_model = deepcopy(model)
 
         if MODE == 'train' and ((epoch + 1) in [args.epochs // 3, args.epochs * 2 // 3, args.epochs]):
             checkpoints.append(deepcopy(model))
 
-    torch.save(model.module.state_dict(),f"model_weight_{step}.pth")
+    torch.save(model.module.state_dict(),f"{args.save_model_path}/{step}_model_weight.pth")
     if MODE == 'train':
         return best_model, checkpoints
 
