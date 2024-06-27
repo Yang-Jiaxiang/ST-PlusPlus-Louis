@@ -1,4 +1,4 @@
-from dataset.semi import SemiDataset
+from dataset.semi_cv2 import SemiDataset
 from model.semseg.deeplabv2 import DeepLabV2
 from model.semseg.deeplabv3plus import DeepLabV3Plus
 from model.semseg.pspnet import PSPNet
@@ -10,6 +10,7 @@ import argparse
 from copy import deepcopy
 import numpy as np
 import os
+import json
 from PIL import Image
 import torch
 from torch.nn import CrossEntropyLoss, DataParallel
@@ -56,6 +57,10 @@ def parse_args():
 def main(args):
     global MODE
     MODE = 'train'
+    
+    with open('voc_mask_color_map.json', 'r') as file:
+        JsonData = json.load(file)
+    voc_mask_color_map = JsonData['voc_mask_color_map']
 
     if not os.path.exists(args.save_model_path):
         os.makedirs(args.save_model_path)
@@ -67,14 +72,14 @@ def main(args):
     # criterion = CrossEntropyLoss(ignore_index=255)
     criterion = DiceLoss()
 
-    valset = SemiDataset(args.dataset, args.data_root, MODE, args.crop_size, args.validation_id_path)    
+    valset = SemiDataset(args.dataset, args.data_root, 'val', args.crop_size, args.validation_id_path, colormap=voc_mask_color_map)    
     valloader = DataLoader(valset, batch_size=4, shuffle=True, pin_memory=True, num_workers=4, drop_last=True)
 
     # <====================== Supervised training with labeled images (SupOnly) ======================>
     print('\n================> Total stage 1/%i: '
           'Supervised training on labeled images (SupOnly)' % (6 if args.plus else 3))
 
-    trainset = SemiDataset(args.dataset, args.data_root, MODE, args.crop_size, args.labeled_id_path)
+    trainset = SemiDataset(args.dataset, args.data_root, 'train', args.crop_size, args.labeled_id_path, colormap=voc_mask_color_map)
     trainset.ids = 2 * trainset.ids if len(trainset.ids) < 200 else trainset.ids
     trainloader = DataLoader(trainset, batch_size=args.batch_size, shuffle=True,
                              pin_memory=True, num_workers=16, drop_last=True)
@@ -91,18 +96,18 @@ def main(args):
         # <============================= Pseudo label all unlabeled images =============================>
         print('\n\n\n================> Total stage 2/3: Pseudo labeling all unlabeled images')
 
-        dataset = SemiDataset(args.dataset, args.data_root, 'label', None, None, args.unlabeled_id_path)
+        dataset = SemiDataset(args.dataset, args.data_root, 'label', args.crop_size, None, args.unlabeled_id_path, colormap=voc_mask_color_map)
         dataloader = DataLoader(dataset, batch_size=1, shuffle=False, pin_memory=True, num_workers=4, drop_last=False)
 
-        label(best_model, dataloader, args)
+        label(best_model, dataloader, args, voc_mask_color_map)
 
         # <======================== Re-training on labeled and unlabeled images ========================>
         print('\n\n\n================> Total stage 3/3: Re-training on labeled and unlabeled images')
 
         MODE = 'semi_train'
 
-        trainset = SemiDataset(args.dataset, args.data_root, MODE, args.crop_size,
-                               args.labeled_id_path, args.unlabeled_id_path, args.pseudo_mask_path)
+        trainset = SemiDataset(args.dataset, args.data_root, 'semi_train', args.crop_size,
+                               args.labeled_id_path, args.unlabeled_id_path, args.pseudo_mask_path, colormap=voc_mask_color_map)
         trainloader = DataLoader(trainset, batch_size=args.batch_size, shuffle=True,
                                  pin_memory=True, num_workers=16, drop_last=True)
 
@@ -118,7 +123,7 @@ def main(args):
     # <===================================== Select Reliable IDs =====================================>
     print('\n\n\n================> Total stage 2/6: Select reliable images for the 1st stage re-training')
 
-    dataset = SemiDataset(args.dataset, args.data_root, 'label', None, None, args.unlabeled_id_path)
+    dataset = SemiDataset(args.dataset, args.data_root, 'label', args.crop_size, None, args.unlabeled_id_path, colormap=voc_mask_color_map)
     dataloader = DataLoader(dataset, batch_size=1, shuffle=False, pin_memory=True, num_workers=4, drop_last=False)
 
     select_reliable(checkpoints, dataloader, args)
@@ -127,18 +132,18 @@ def main(args):
     print('\n\n\n================> Total stage 3/6: Pseudo labeling reliable images')
 
     cur_unlabeled_id_path = os.path.join(args.reliable_id_path, 'reliable_ids.txt')
-    dataset = SemiDataset(args.dataset, args.data_root, 'label', None, None, cur_unlabeled_id_path)
+    dataset = SemiDataset(args.dataset, args.data_root, 'label', args.crop_size, None, cur_unlabeled_id_path, colormap=voc_mask_color_map)
     dataloader = DataLoader(dataset, batch_size=1, shuffle=False, pin_memory=True, num_workers=4, drop_last=False)
 
-    label(best_model, dataloader, args)
+    label(best_model, dataloader, args, voc_mask_color_map)
 
     # <================================== The 1st stage re-training ==================================>
     print('\n\n\n================> Total stage 4/6: The 1st stage re-training on labeled and reliable unlabeled images')
 
     MODE = 'semi_train'
 
-    trainset = SemiDataset(args.dataset, args.data_root, MODE, args.crop_size,
-                           args.labeled_id_path, cur_unlabeled_id_path, args.pseudo_mask_path)
+    trainset = SemiDataset(args.dataset, args.data_root, 'semi_train', args.crop_size,
+                           args.labeled_id_path, cur_unlabeled_id_path, args.pseudo_mask_path, colormap=voc_mask_color_map)
     trainloader = DataLoader(trainset, batch_size=args.batch_size, shuffle=True,
                              pin_memory=True, num_workers=16, drop_last=True)
 
@@ -150,16 +155,16 @@ def main(args):
     print('\n\n\n================> Total stage 5/6: Pseudo labeling unreliable images')
 
     cur_unlabeled_id_path = os.path.join(args.reliable_id_path, 'unreliable_ids.txt')
-    dataset = SemiDataset(args.dataset, args.data_root, 'label', None, None, cur_unlabeled_id_path)
+    dataset = SemiDataset(args.dataset, args.data_root, 'label', args.crop_size, None, cur_unlabeled_id_path, colormap=voc_mask_color_map)
     dataloader = DataLoader(dataset, batch_size=1, shuffle=False, pin_memory=True, num_workers=4, drop_last=False)
 
-    label(best_model, dataloader, args)
+    label(best_model, dataloader, args, voc_mask_color_map)
 
     # <================================== The 2nd stage re-training ==================================>
     print('\n\n\n================> Total stage 6/6: The 2nd stage re-training on labeled and all unlabeled images')
 
-    trainset = SemiDataset(args.dataset, args.data_root, MODE, args.crop_size,
-                           args.labeled_id_path, args.unlabeled_id_path, args.pseudo_mask_path)
+    trainset = SemiDataset(args.dataset, args.data_root, 'semi_train', args.crop_size,
+                           args.labeled_id_path, args.unlabeled_id_path, args.pseudo_mask_path, colormap=voc_mask_color_map)
     trainloader = DataLoader(trainset, batch_size=args.batch_size, shuffle=True,
                              pin_memory=True, num_workers=16, drop_last=True)
 
@@ -350,15 +355,11 @@ def select_reliable(models, dataloader, args):
 
 #             tbar.set_description('mIOU: %.2f' % (mIOU * 100.0))
 
-def label(model, dataloader, args):
+def label(model, dataloader, args, voc_mask_color_map):
     model.eval()
     tbar = tqdm(dataloader)
-    class_colors = [
-        [0, 0, 0],  # 类别 0 的颜色为黑色
-        [255, 0, 0]  # 类别 1 的颜色为红色
-    ]
     # 创建调色板
-    cmap = np.array(class_colors, dtype=np.uint8)#.flatten()
+    cmap = np.array(voc_mask_color_map, dtype=np.uint8)#.flatten()
     with torch.no_grad():
         for img,mask,id in tbar:
             img = img.cuda()
@@ -373,7 +374,7 @@ if __name__ == '__main__':
     args = parse_args()
 
     if args.epochs is None:
-        args.epochs = {'pascal': 80, 'cityscapes': 240, 'kidney': 60}[args.dataset]
+        args.epochs = {'pascal': 80, 'cityscapes': 240, 'kidney': 100}[args.dataset]
     if args.lr is None:
         args.lr = {'pascal': 0.001, 'cityscapes': 0.004, 'kidney': 0.001}[args.dataset] / 16 * args.batch_size
     if args.crop_size is None:

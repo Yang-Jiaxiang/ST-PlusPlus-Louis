@@ -2,6 +2,7 @@ import numpy as np
 from PIL import Image, ImageOps, ImageFilter
 import random
 import torch
+import albumentations as albu
 from torchvision import transforms
 
 
@@ -100,3 +101,29 @@ def cutout(img, mask, p=0.5, size_min=0.02, size_max=0.4, ratio_1=0.3,
         mask = Image.fromarray(mask.astype(np.uint8))
 
     return img, mask
+
+# 定義一個針對圖像的增強管道
+image_only_transform = albu.Compose([
+    albu.GaussNoise(p=0.1),
+    albu.OneOf([
+        albu.CLAHE(p=1),
+        albu.RandomBrightnessContrast(p=1),
+        albu.RandomGamma(p=1),
+    ], p=0.9),
+    albu.OneOf([
+        albu.Sharpen(p=1),
+        albu.Blur(blur_limit=3, p=1),
+        albu.MotionBlur(blur_limit=3, p=1),
+    ], p=0.9),
+    albu.OneOf([
+        albu.RandomBrightnessContrast(p=1),
+        albu.HueSaturationValue(p=1),
+    ], p=0.9),
+])
+
+# 定義一個針對圖像和遮罩的共同變換管道
+shared_transform = albu.Compose([
+    albu.HorizontalFlip(p=0.5),
+    albu.ShiftScaleRotate(scale_limit=0, rotate_limit=0, shift_limit=0.1, p=1, border_mode=0),
+    albu.Perspective(p=0.5),
+])
