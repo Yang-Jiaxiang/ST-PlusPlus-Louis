@@ -168,3 +168,4 @@ pretrained/*
 *.jpeg
 *.PNG
 *.pyc
+*.pth
